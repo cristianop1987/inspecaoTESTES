@@ -27,8 +27,8 @@
         .camera-tools input[type=range] { width:100%; margin:8px 0; }
         .camera-tools small { color:#555; display:block; line-height:1.4; }
         .btn-focus { background:#e9eefc; color:#003399; border:1px solid #c7d4f5; padding:10px; }
-        /* Oculta a mensagem de status do zoom automático sem desativar a função. */
-        #cameraTools { display: none !important; }
+        /* Gestos de pinça controlam o zoom da câmera na área de leitura. */
+        #reader, #reader video { touch-action: none; }
     </style>
 </head>
 <body>
@@ -49,8 +49,8 @@
     
     <div id="reader"></div>
     <div id="cameraTools" class="camera-tools" style="display:none; margin-top:8px; padding:10px; background:#eef2ff; border-radius:8px; color:#003399;">
-        <strong id="autoZoomStatus">🔎 Busca automática do QR Code pronta.</strong>
-        <small id="cameraHelp" style="display:block; margin-top:5px;">A câmera tentará aproximar automaticamente. O zoom depende do suporte do aparelho e do navegador.</small>
+        <strong id="autoZoomStatus">Use dois dedos para ajustar o zoom.</strong>
+        <small id="cameraHelp" style="display:block; margin-top:5px;">Afaste os dedos para aproximar e junte para afastar. Depende do suporte do aparelho.</small>
     </div>
 
     <button onclick="alternarEntradaManual()" id="btnManual" 
@@ -181,66 +181,75 @@
     document.getElementById('m-inspec').value = "";
     alternarEntradaManual();
 }
-    // --- QR CODE: foco contínuo e busca automática por zoom ---
+    // --- QR CODE: foco contínuo e zoom por gesto de pinça ---
     let zoomMin = 1;
     let zoomMax = 1;
     let zoomAtual = 1;
-    let autoZoomTimer = null;
-    let autoZoomBusy = false;
+    let zoomStep = 0.1;
+    let zoomDisponivel = false;
+    let distanciaInicialPinch = 0;
+    let zoomInicialPinch = 1;
+    let ultimoZoomAplicado = 0;
+    let aplicandoZoom = false;
 
-    async function iniciarZoomAutomatico() {
-        pararZoomAutomatico();
-        const status = document.getElementById('autoZoomStatus');
-        const ajuda = document.getElementById('cameraHelp');
+    async function prepararZoomManual() {
+        zoomDisponivel = false;
         try {
-            // A biblioteca expõe os recursos reais da faixa de vídeo ativa.
             const caps = html5QrCode.getRunningTrackCapabilities();
             const z = caps && caps.zoom;
             await html5QrCode.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-            if (!z || typeof z.min !== 'number' || typeof z.max !== 'number' || z.max <= z.min) {
-                status.textContent = '🔎 Leitura automática ativa';
-                ajuda.textContent = 'Este aparelho/navegador não permite controlar o zoom pelo site. O leitor continuará procurando o QR Code; se necessário, aproxime a câmera da etiqueta.';
-                return;
+            if (z && typeof z.min === 'number' && typeof z.max === 'number' && z.max > z.min) {
+                zoomMin = z.min;
+                zoomMax = z.max;
+                zoomStep = Number(z.step) || Math.max(0.1, (zoomMax - zoomMin) / 100);
+                zoomAtual = Math.max(zoomMin, Math.min(zoomMax, Number(z.min) || 1));
+                zoomDisponivel = true;
+                await html5QrCode.applyVideoConstraints({ advanced: [{ zoom: zoomAtual }] });
             }
-            zoomMin = z.min;
-            zoomMax = z.max;
-            zoomAtual = zoomMin;
-            await html5QrCode.applyVideoConstraints({ advanced: [{ zoom: zoomAtual }] });
-            const passo = Math.max(Number(z.step) || 0.1, (zoomMax - zoomMin) / 8);
-            status.textContent = '🔎 Procurando QR Code automaticamente…';
-            ajuda.textContent = 'O zoom aumenta sozinho em etapas e reinicia a busca até encontrar um código.';
-            autoZoomTimer = setInterval(async () => {
-                if (!cameraAtiva || !html5QrCode || autoZoomBusy) return;
-                autoZoomBusy = true;
-                try {
-                    // Varre gradualmente o intervalo de zoom disponível.
-                    zoomAtual += passo;
-                    if (zoomAtual > zoomMax + 0.001) zoomAtual = zoomMin;
-                    zoomAtual = Math.min(zoomMax, Math.round(zoomAtual * 100) / 100);
-                    await html5QrCode.applyVideoConstraints({ advanced: [{ zoom: zoomAtual }] });
-                    status.textContent = '🔎 Procurando QR Code… zoom ' + zoomAtual.toFixed(1) + '×';
-                } catch (e) {
-                    // Se o navegador recusar o zoom, não interrompe a leitura do QR.
-                    pararZoomAutomatico();
-                    status.textContent = '🔎 Leitura automática ativa';
-                    ajuda.textContent = 'O navegador não aceitou o zoom automático. A leitura continua ativa sem aproximação controlada.';
-                } finally {
-                    autoZoomBusy = false;
-                }
-            }, 1400);
         } catch (e) {
-            status.textContent = '🔎 Leitura automática ativa';
-            ajuda.textContent = 'Não foi possível controlar o zoom desta câmera. O leitor continuará tentando reconhecer o QR Code.';
+            zoomDisponivel = false;
         }
     }
 
-    function pararZoomAutomatico() {
-        if (autoZoomTimer) {
-            clearInterval(autoZoomTimer);
-            autoZoomTimer = null;
-        }
-        autoZoomBusy = false;
+    function distanciaEntreDedos(touches) {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        return Math.sqrt(dx * dx + dy * dy);
     }
+
+    const areaCamera = document.getElementById('reader');
+    areaCamera.style.touchAction = 'none';
+    areaCamera.addEventListener('touchstart', (event) => {
+        if (!cameraAtiva || event.touches.length !== 2) return;
+        event.preventDefault();
+        distanciaInicialPinch = distanciaEntreDedos(event.touches);
+        zoomInicialPinch = zoomAtual;
+        ultimoZoomAplicado = 0;
+    }, { passive: false });
+
+    areaCamera.addEventListener('touchmove', (event) => {
+        if (!cameraAtiva || event.touches.length !== 2 || !distanciaInicialPinch) return;
+        event.preventDefault();
+        if (!zoomDisponivel || aplicandoZoom) return;
+        const distanciaAtual = distanciaEntreDedos(event.touches);
+        const escala = distanciaAtual / distanciaInicialPinch;
+        let novoZoom = Math.max(zoomMin, Math.min(zoomMax, zoomInicialPinch * escala));
+        novoZoom = Math.round(novoZoom / zoomStep) * zoomStep;
+        novoZoom = Math.max(zoomMin, Math.min(zoomMax, Number(novoZoom.toFixed(2))));
+        if (Math.abs(novoZoom - zoomAtual) < zoomStep || Date.now() - ultimoZoomAplicado < 90) return;
+        zoomAtual = novoZoom;
+        ultimoZoomAplicado = Date.now();
+        aplicandoZoom = true;
+        html5QrCode.applyVideoConstraints({ advanced: [{ zoom: zoomAtual }] })
+            .catch(() => {})
+            .finally(() => { aplicandoZoom = false; });
+    }, { passive: false });
+
+    function encerrarPinch() {
+        distanciaInicialPinch = 0;
+    }
+    areaCamera.addEventListener('touchend', encerrarPinch, { passive: true });
+    areaCamera.addEventListener('touchcancel', encerrarPinch, { passive: true });
 
     function toggleCamera() {
         if (!cameraAtiva) {
@@ -272,8 +281,8 @@
             .then(() => {
                 cameraAtiva = true;
                 document.getElementById('btnAcao').innerText = 'DESLIGAR CÂMERA';
-                document.getElementById('cameraTools').style.display = 'block';
-                setTimeout(iniciarZoomAutomatico, 350);
+                document.getElementById('cameraTools').style.display = 'none';
+                setTimeout(prepararZoomManual, 350);
             })
             .catch(err => {
                 console.warn('Não foi possível iniciar com as configurações preferidas:', err);
@@ -284,8 +293,8 @@
                 }, onScanSuccess).then(() => {
                     cameraAtiva = true;
                     document.getElementById('btnAcao').innerText = 'DESLIGAR CÂMERA';
-                    document.getElementById('cameraTools').style.display = 'block';
-                    setTimeout(iniciarZoomAutomatico, 350);
+                    document.getElementById('cameraTools').style.display = 'none';
+                    setTimeout(prepararZoomManual, 350);
                 }).catch(e => {
                     alert('Não foi possível iniciar a câmera. Confira a permissão e abra o site por HTTPS.');
                 });
@@ -296,14 +305,12 @@
     }
 
     function pararCamera() {
-        pararZoomAutomatico();
         if (html5QrCode) {
             html5QrCode.stop().then(() => { cameraAtiva = false; document.getElementById('btnAcao').innerText = "LER QRCODE"; document.getElementById('cameraTools').style.display = 'none'; }).catch(() => { cameraAtiva = false; });
         }
     }
 
     function onScanSuccess(decodedText) {
-    pararZoomAutomatico();
     pararCamera();
     let partes = decodedText.split('|');
     let cte, destino, qtdTotal, tipo;
@@ -357,3 +364,14 @@
 </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
