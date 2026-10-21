@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#003399">
+    <link rel="icon" type="image/jpeg" href="x-ray.png">
+    <title>Scanner F-CGO-004 - Azul Cargo</title>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 15px; background-color: #f0f2f5; }
+        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 450px; margin: auto; }
+        h2 { color: #003399; margin-bottom: 5px; }
+        .count-box { background: #eef2ff; padding: 10px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #d1d9e6; }
+        .progress-container { background-color: #ddd; border-radius: 10px; height: 10px; width: 100%; margin-top: 8px; overflow: hidden; }
+        .progress-bar { height: 100%; width: 0%; background-color: #28a745; transition: width 0.3s; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+        #reader { width: 100%; border-radius: 12px; margin-top: 10px; background: #000; }
+        button { width: 100%; padding: 15px; margin-top: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; font-size: 16px; transition: 0.2s; }
+        .btn-camera { background-color: #003399; color: white; }
+        .btn-pdf { background-color: #28a745; color: white; }
+        .btn-limpar { background-color: #f0ad4e; color: white; }
+        .btn-limpar:disabled { background-color: #cccccc; cursor: not-allowed; opacity: 0.7; }
+        #status { margin-top: 15px; font-weight: bold; min-height: 20px; }
+        .camera-tools { display:none; margin-top:12px; padding:12px; border:1px solid #d1d9e6; border-radius:12px; background:#f8f9ff; text-align:left; }
+        .camera-tools label { display:block; font-weight:600; margin-bottom:8px; }
+        .camera-tools input[type=range] { width:100%; margin:8px 0; }
+        .camera-tools small { color:#555; display:block; line-height:1.4; }
+        .btn-focus { background:#e9eefc; color:#003399; border:1px solid #c7d4f5; padding:10px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Scanner Azul Cargo</h2>
+    <p style="font-size: 12px; margin-bottom: 15px;">Inspeção de Carga F-CGO-004</p>
+
+    <div class="count-box">
+        <strong>Itens Bipados:</strong> <span id="contagem">0</span> / 21
+        <div class="progress-container">
+            <div id="barra" class="progress-bar"></div>
+        </div>
+    </div>
+
+    <input type="text" id="nome" placeholder="Nome do APAC">
+    <input type="text" id="re" placeholder="RE">
+    
+    <div id="reader"></div>
+    <div id="cameraTools" class="camera-tools">
+        <label for="zoomRange">🔎 Zoom da câmera: <span id="zoomValue">1.0×</span></label>
+        <input id="zoomRange" type="range" min="1" max="1" step="0.1" value="1" disabled>
+        <button type="button" class="btn-focus" onclick="ajustarFoco()">🎯 Tentar ajustar foco</button>
+        <small id="cameraHelp">O zoom depende dos recursos liberados pelo celular e pelo navegador.</small>
+    </div>
+
+    <button onclick="alternarEntradaManual()" id="btnManual" 
+            style="margin-top: 15px; background: none; border: 1px solid #003399; color: #003399; padding: 8px 15px; border-radius: 20px; cursor: pointer; font-size: 14px; font-weight: bold;">
+        ⌨️ Entrada Manual de Dados
+    </button>
+
+    <div id="manual-input-container" style="display: none; margin-top: 15px; flex-direction: column; align-items: center; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 12px; border: 1px solid #ddd;">
+        <input type="text" id="m-codigo" placeholder="CTE ou Saco Coletor" style="width: 90%; padding: 10px;">
+        <input type="text" id="m-destino" placeholder="Destino" style="width: 90%; padding: 10px;">
+        <div style="display: flex; gap: 5px; width: 95%; justify-content: center;">
+            <input type="number" id="m-total" placeholder="Qtd Total" style="width: 45%; padding: 10px;">
+            <input type="number" id="m-inspec" placeholder="Qtd Inspec" style="width: 45%; padding: 10px;">
+        </div>
+        <div style="display: flex; gap: 10px; width: 95%;">
+            <button onclick="processarManual()" style="flex: 2; background-color: #003399; color: white; padding: 10px;">GRAVAR DADOS</button>
+            <button onclick="alternarEntradaManual()" style="flex: 1; background-color: #666; color: white; padding: 10px;">VOLTAR</button>
+        </div>
+    </div>
+    
+    <button class="btn-camera" id="btnAcao" onclick="toggleCamera()">LER QRCODE</button>
+    <div id="status"></div>
+
+    <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+    
+    <button class="btn-pdf" onclick="encerrarTurno()">ENCERRAR TURNO</button>
+    <button id="btnLimpar" class="btn-limpar" onclick="confirmarLimpeza()" disabled>LIMPAR PLANILHA</button>
+</div>
+
+<script>
+    const scriptURL = 'https://script.google.com/macros/s/AKfycbwQq3LaV-duUZzCRgoKwTdzWjBXaKiqPgDCMZU4RA6mTUV8-GHWV7j740IA_DImHwRpUA/exec'; 
+    let html5QrCode;
+    let cameraAtiva = false;
+
+    window.onload = function() {
+        fetch(scriptURL + '?action=getContagem')
+        .then(r => r.text())
+        .then(res => { atualizarContador(res); });
+    };
+
+    function atualizarContador(valor) {
+        const n = parseInt(valor) || 0;
+        document.getElementById('contagem').innerText = n;
+        const barra = document.getElementById('barra');
+        const btnLimpar = document.getElementById('btnLimpar');
+        barra.style.width = (n / 21 * 100) + "%";
+        btnLimpar.disabled = (n < 21);
+        barra.style.backgroundColor = n >= 21 ? "#003399" : (n >= 18 ? "#d9534f" : "#28a745");
+    }
+
+    // --- FUNÇÃO DE ENVIO UNIFICADA ---
+    function enviarParaPlanilha(objetoDados) {
+        document.getElementById('status').innerText = "Enviando...";
+        fetch(scriptURL, { method: 'POST', body: JSON.stringify(objetoDados) })
+        .then(r => r.text())
+        .then(res => {
+            if (res === "REPETIDO") {
+                if (confirm("Código já registrado. Enviar novamente?")) {
+                    objetoDados.confirmarRepetido = true;
+                    enviarParaPlanilha(objetoDados);
+                } else { document.getElementById('status').innerText = "Cancelado"; }
+            } else if (res === "CHEIA") {
+                alert("Planilha cheia!");
+            } else {
+                atualizarContador(res);
+                document.getElementById('status').innerText = "✅ Registrado (" + res + "/21)";
+            }
+        }).catch(err => { document.getElementById('status').innerText = "Erro de conexão"; });
+    }
+
+    // --- ENTRADA MANUAL ---
+    function alternarEntradaManual() {
+        const container = document.getElementById('manual-input-container');
+        const btnManual = document.getElementById('btnManual');
+        container.style.display = container.style.display === "none" ? "flex" : "none";
+        btnManual.style.display = container.style.display === "none" ? "inline-block" : "none";
+    }
+
+    function processarManual() {
+    let codigoRaw = document.getElementById('m-codigo').value.trim().toUpperCase();
+    let cteFormatado = codigoRaw;
+    let tipo = "SACO"; // Padrão inicial
+
+    // 1. LÓGICA PARA TIPO "577"
+    // Verifica se começa com 577 OU se tem 8 dígitos numéricos (padrão após o 577)
+    if (codigoRaw.startsWith("577") || (/^\d{8}$/.test(codigoRaw))) {
+        tipo = "577";
+        
+        if (codigoRaw.startsWith("577")) {
+            // Se digitou 577 + números, remove o 577 e pega os 8 dígitos seguintes
+            cteFormatado = codigoRaw.substring(3, 11); 
+        } else {
+            // Se digitou os 8 dígitos direto, pega apenas os 8 primeiros conforme sua regra
+            cteFormatado = codigoRaw.substring(0, 8);
+        }
+    } 
+    // 2. LÓGICA PARA TIPO "SACO"
+    // Verifica se começa com letras seguidas de "-" ou apenas letras iniciais (Ex: FOR- ou FOR05)
+    else if (/[A-Z]{2,}/.test(codigoRaw)) {
+        tipo = "SACO";
+        cteFormatado = codigoRaw;
+    }
+
+    const dados = {
+        data: new Date().toLocaleString('pt-BR'),
+        cte: cteFormatado,
+        destino: document.getElementById('m-destino').value.trim().toUpperCase(),
+        qtdTotal: document.getElementById('m-total').value,
+        qtdInspec: document.getElementById('m-inspec').value,
+        tipo: tipo,
+        nome: document.getElementById('nome').value,
+        re: document.getElementById('re').value,
+        confirmarRepetido: false
+    };
+
+    // Validação de campos obrigatórios
+    if (!dados.cte || !dados.destino || !dados.nome || !dados.re) {
+        alert("Por favor, preencha todos os campos obrigatórios.");
+        return;
+    }
+
+    enviarParaPlanilha(dados);
+
+    // Limpa os campos e fecha o formulário
+    document.getElementById('m-codigo').value = "";
+    document.getElementById('m-destino').value = "";
+    document.getElementById('m-total').value = "";
+    document.getElementById('m-inspec').value = "";
+    alternarEntradaManual();
+}
+    // --- QR CODE: recursos reais da câmera, zoom ajustável e foco quando suportado ---
+    let zoomMin = 1;
+    let zoomMax = 1;
+    let zoomAtual = 1;
+
+    function atualizarControleZoom() {
+        const slider = document.getElementById('zoomRange');
+        const valor = document.getElementById('zoomValue');
+        const ajuda = document.getElementById('cameraHelp');
+        try {
+            const caps = html5QrCode.getRunningTrackCapabilities();
+            const zoom = caps && caps.zoom;
+            if (zoom && typeof zoom.min === 'number' && typeof zoom.max === 'number' && zoom.max > zoom.min) {
+                zoomMin = zoom.min;
+                zoomMax = zoom.max;
+                zoomAtual = Math.max(zoomMin, Math.min(zoomAtual, zoomMax));
+                slider.min = zoomMin;
+                slider.max = zoomMax;
+                slider.step = zoom.step || 0.1;
+                slider.value = zoomAtual;
+                slider.disabled = false;
+                valor.textContent = Number(zoomAtual).toFixed(1) + '×';
+                ajuda.textContent = 'Ajuste o zoom enquanto a câmera estiver ligada. O aparelho informa o limite de ' + zoomMax + '×.';
+            } else {
+                slider.min = 1; slider.max = 1; slider.value = 1; slider.disabled = true;
+                valor.textContent = 'indisponível';
+                ajuda.textContent = 'Este navegador/aparelho não disponibilizou controle de zoom. A leitura ainda pode funcionar aproximando a câmera da etiqueta.';
+            }
+        } catch (e) {
+            slider.disabled = true;
+            valor.textContent = 'indisponível';
+            ajuda.textContent = 'Não foi possível consultar os controles avançados desta câmera.';
+        }
+    }
+
+    async function aplicarZoom(valor) {
+        if (!cameraAtiva || !html5QrCode) return;
+        const novoZoom = Number(valor);
+        document.getElementById('zoomValue').textContent = novoZoom.toFixed(1) + '×';
+        try {
+            await html5QrCode.applyVideoConstraints({ advanced: [{ zoom: novoZoom }] });
+            zoomAtual = novoZoom;
+        } catch (e) {
+            document.getElementById('cameraHelp').textContent = 'O navegador não aceitou este nível de zoom. Tente outro valor ou aproxime o celular.';
+        }
+    }
+    document.getElementById('zoomRange').addEventListener('input', e => aplicarZoom(e.target.value));
+
+    async function ajustarFoco() {
+        if (!cameraAtiva || !html5QrCode) return;
+        const ajuda = document.getElementById('cameraHelp');
+        try {
+            await html5QrCode.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
+            ajuda.textContent = 'Solicitação de foco contínuo enviada. O suporte depende do aparelho e do navegador.';
+        } catch (e) {
+            ajuda.textContent = 'O navegador não permite controlar o foco manualmente. Afaste um pouco a câmera, toque para focar na câmera nativa se necessário e mantenha a etiqueta bem iluminada.';
+        }
+    }
+
+    function toggleCamera() {
+        if (!cameraAtiva) {
+            if(!document.getElementById('nome').value || !document.getElementById('re').value) {
+                alert('Preencha Nome e RE primeiro.'); return;
+            }
+
+            html5QrCode = new Html5Qrcode('reader', {
+                useBarCodeDetectorIfSupported: true,
+                formatsToSupport: [ Html5QrcodeSupportedFormats.QR_CODE ]
+            });
+
+            const config = {
+                fps: 20,
+                qrbox: (viewfinderWidth, viewfinderHeight) => {
+                    const size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.78);
+                    return { width: size, height: size };
+                },
+                aspectRatio: 1.0,
+                videoConstraints: {
+                    facingMode: 'environment',
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 },
+                    advanced: [{ focusMode: 'continuous' }]
+                }
+            };
+
+            html5QrCode.start({ facingMode: 'environment' }, config, onScanSuccess)
+            .then(() => {
+                cameraAtiva = true;
+                document.getElementById('btnAcao').innerText = 'DESLIGAR CÂMERA';
+                document.getElementById('cameraTools').style.display = 'block';
+                setTimeout(atualizarControleZoom, 250);
+            })
+            .catch(err => {
+                console.warn('Não foi possível iniciar com as configurações preferidas:', err);
+                html5QrCode.start({ facingMode: 'environment' }, {
+                    fps: 15,
+                    qrbox: { width: 250, height: 250 },
+                    aspectRatio: 1.0
+                }, onScanSuccess).then(() => {
+                    cameraAtiva = true;
+                    document.getElementById('btnAcao').innerText = 'DESLIGAR CÂMERA';
+                    document.getElementById('cameraTools').style.display = 'block';
+                    setTimeout(atualizarControleZoom, 250);
+                }).catch(e => {
+                    alert('Não foi possível iniciar a câmera. Confira a permissão e abra o site por HTTPS.');
+                });
+            });
+        } else {
+            pararCamera();
+        }
+    }
+
+    function pararCamera() {
+        if (html5QrCode) {
+            html5QrCode.stop().then(() => { cameraAtiva = false; document.getElementById('btnAcao').innerText = "LER QRCODE"; document.getElementById('cameraTools').style.display = 'none'; });
+        }
+    }
+
+    function onScanSuccess(decodedText) {
+    pararCamera();
+    let partes = decodedText.split('|');
+    let cte, destino, qtdTotal, tipo;
+
+    if (decodedText.startsWith("577")) {
+        tipo = "577";
+        // Remove o 577 e captura apenas os 8 dígitos seguintes
+        cte = decodedText.substring(3, 11); 
+        
+        // Pega a parte 7, e se houver hífens (ex: TRES2-FOR-CNF-BPS), pega só o último (BPS)
+        let destinoBruto = partes[7] || "N/I";
+        let destinoPartes = destinoBruto.split('-');
+        destino = destinoPartes[destinoPartes.length - 1].trim(); 
+
+        qtdTotal = partes[9] || "0";
+    } else {
+        tipo = "SACO";
+        cte = partes[0];
+        destino = partes[3] || "N/I";
+        qtdTotal = "1";
+    }
+
+    let qtdInspec = prompt(`CTE: ${cte}\nDestino: ${destino}\nVolumes inspecionados?`, "1");
+    if (qtdInspec === null) return;
+
+    enviarParaPlanilha({
+        data: new Date().toLocaleString('pt-BR'),
+        cte: cte, 
+        destino: destino, 
+        qtdTotal: qtdTotal, 
+        qtdInspec: qtdInspec,
+        tipo: tipo, 
+        nome: document.getElementById('nome').value, 
+        re: document.getElementById('re').value,
+        confirmarRepetido: false
+    });
+}
+
+    function confirmarLimpeza() {
+        if (confirm("Limpar planilha?")) {
+            fetch(scriptURL + '?action=limpar').then(() => { atualizarContador(0); });
+        }
+    }
+
+    function encerrarTurno() {
+        if (confirm("Encerrar turno e arquivar?")) {
+            const url = `${scriptURL}?action=encerrar&nome=${encodeURIComponent(document.getElementById('nome').value)}&re=${encodeURIComponent(document.getElementById('re').value)}`;
+            fetch(url).then(r => r.text()).then(res => { if(res==="OK") { alert("Arquivado!"); atualizarContador(0); }});
+        }
+    }
+</script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
