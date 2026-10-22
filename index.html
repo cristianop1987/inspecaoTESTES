@@ -244,9 +244,10 @@
                 zoomAtual = novoZoom;
                 ultimoZoomAplicado = Date.now();
                 aplicandoZoom = true;
-                advanced: [{ zoom: zoomAtual }]
-})
-    .then(async () => {
+                html5QrCode.applyVideoConstraints({
+                    advanced: [{ zoom: zoomAtual }]
+                })
+                .then(async () => {
         // Dá tempo para a câmera estabilizar o zoom.
         await new Promise(resolve => setTimeout(resolve, 250));
 
