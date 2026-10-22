@@ -22,7 +22,11 @@
         .btn-limpar { background-color: #f0ad4e; color: white; }
         .btn-limpar:disabled { background-color: #cccccc; cursor: not-allowed; opacity: 0.7; }
         #status { margin-top: 15px; font-weight: bold; min-height: 20px; }
-        #reader, #reader video { touch-action: none; }
+        #reader { overflow: hidden; position: relative; }
+        #reader video { touch-action: none; object-fit: cover; }
+        /* Mantém a área da câmera estável em celulares com proporções diferentes. */
+        #reader__scan_region { min-height: 240px; }
+
     </style>
 </head>
 <body>
@@ -173,44 +177,71 @@
     }
 
     async function prepararZoomManual() {
-    zoomDisponivel = false;
-
-    try {
-        const caps = html5QrCode.getRunningTrackCapabilities();
-
-        // Ativa o foco automático contínuo, se disponível.
-        if (caps.focusMode &&
-            caps.focusMode.includes("continuous")) {
-
-            await html5QrCode.applyVideoConstraints({
-                advanced: [{ focusMode: "continuous" }]
-            });
-        }
-
-        // Verifica se o celular permite zoom real da câmera.
-        const z = caps.zoom;
-
-        if (z && typeof z.min === "number" &&
-            typeof z.max === "number" && z.max > z.min) {
-
-            zoomMin = z.min;
-            zoomMax = z.max;
-            zoomStep = Number(z.step) ||
-                Math.max(0.1, (zoomMax - zoomMin) / 100);
-
-            zoomAtual = zoomMin;
-            zoomDisponivel = true;
-
-            await html5QrCode.applyVideoConstraints({
-                advanced: [{ zoom: zoomAtual }]
-            });
-        }
-
-    } catch (e) {
-        console.warn("Não foi possível configurar foco/zoom:", e);
         zoomDisponivel = false;
+        if (!html5QrCode || !cameraAtiva) return;
+
+        try {
+            const caps = html5QrCode.getRunningTrackCapabilities();
+            const zoom = caps && caps.zoom;
+
+            // Solicita foco contínuo quando o navegador/celular oferece esse recurso.
+            try {
+                await html5QrCode.applyVideoConstraints({
+                    advanced: [{ focusMode: 'continuous' }]
+                });
+            } catch (_) {
+                // Alguns aparelhos não expõem focusMode pela câmera web.
+            }
+
+            if (zoom && typeof zoom.min === 'number' &&
+                typeof zoom.max === 'number' && zoom.max > zoom.min) {
+                zoomMin = zoom.min;
+                zoomMax = zoom.max;
+                zoomStep = Number(zoom.step) || Math.max(0.1, (zoomMax - zoomMin) / 100);
+
+                // Começa no zoom óptico/digital mínimo suportado, sem forçar um valor inválido.
+                const settings = html5QrCode.getRunningTrackSettings
+                    ? html5QrCode.getRunningTrackSettings()
+                    : {};
+                const zoomConfigurado = settings && typeof settings.zoom === 'number'
+                    ? settings.zoom : zoomMin;
+
+                zoomAtual = Math.max(zoomMin, Math.min(zoomMax, zoomConfigurado));
+                zoomDisponivel = true;
+
+                // Reaplica o valor atual com o formato de constraints mais compatível.
+                await aplicarZoomNativo(zoomAtual);
+            } else {
+                // O zoom nativo não é disponibilizado por todos os navegadores.
+                zoomMin = 1;
+                zoomMax = 1;
+                zoomAtual = 1;
+            }
+        } catch (e) {
+            zoomDisponivel = false;
+            console.debug('Controles avançados da câmera indisponíveis:', e);
+        }
     }
-}
+
+    async function aplicarZoomNativo(valor) {
+        if (!html5QrCode) return false;
+
+        // Tenta os dois formatos usados pelos navegadores para aplicar zoom.
+        try {
+            await html5QrCode.applyVideoConstraints({
+                advanced: [{ zoom: valor }]
+            });
+            return true;
+        } catch (_) {
+            try {
+                await html5QrCode.applyVideoConstraints({ zoom: valor });
+                return true;
+            } catch (e) {
+                console.debug('Zoom nativo não aceito pela câmera:', e);
+                return false;
+            }
+        }
+    }
 
     function distanciaEntreDedos(touches) {
         const dx = touches[0].clientX - touches[1].clientX;
@@ -240,32 +271,13 @@
                 let novoZoom = Math.max(zoomMin, Math.min(zoomMax, zoomInicialPinch * escala));
                 novoZoom = Math.round(novoZoom / zoomStep) * zoomStep;
                 novoZoom = Math.max(zoomMin, Math.min(zoomMax, Number(novoZoom.toFixed(2))));
-                if (Math.abs(novoZoom - zoomAtual) < zoomStep || Date.now() - ultimoZoomAplicado < 180) return;
-                zoomAtual = novoZoom;
+                if (Math.abs(novoZoom - zoomAtual) < zoomStep || Date.now() - ultimoZoomAplicado < 90) return;
+
                 ultimoZoomAplicado = Date.now();
                 aplicandoZoom = true;
-                html5QrCode.applyVideoConstraints({
-                    advanced: [{ zoom: zoomAtual }]
-                })
-                .then(async () => {
-        // Dá tempo para a câmera estabilizar o zoom.
-        await new Promise(resolve => setTimeout(resolve, 250));
-
-        // Solicita novamente o foco contínuo.
-        try {
-            await html5QrCode.applyVideoConstraints({
-                advanced: [{ focusMode: "continuous" }]
-            });
-        } catch (e) {
-            // Alguns celulares não permitem alterar o foco.
-        }
-    })
-    .catch(e => {
-        console.warn("Falha ao aplicar zoom:", e);
-    })
-    .finally(() => {
-        aplicandoZoom = false;
-    });
+                aplicarZoomNativo(novoZoom).then(aplicado => {
+                    if (aplicado) zoomAtual = novoZoom;
+                }).finally(() => { aplicandoZoom = false; });
             }, { passive: false });
 
             const encerrarPinch = () => { distanciaInicialPinch = 0; };
@@ -288,13 +300,17 @@
             // Configuração com qrbox seguro em pixels fixos para evitar erros de cálculo
             const config = {
                 fps: 20,
-                qrbox: { width: 260, height: 260 },
+                qrbox: (viewfinderWidth, viewfinderHeight) => {
+                    // Caixa responsiva: não excede a imagem disponível no E13 nem no A23.
+                    const lado = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.78);
+                    return { width: Math.max(180, lado), height: Math.max(180, lado) };
+                },
                 aspectRatio: 1.0,
+                disableFlip: true,
                 videoConstraints: {
                     facingMode: "environment",
                     width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    advanced: [{ focusMode: "continuous" }]
+                    height: { ideal: 1080 }
                 }
             };
 
@@ -302,18 +318,22 @@
             .then(() => { 
                 cameraAtiva = true; 
                 document.getElementById('btnAcao').innerText = "DESLIGAR CÂMERA"; 
-                setTimeout(prepararZoomManual, 350);
+                setTimeout(prepararZoomManual, 700);
             })
             .catch(err => {
                 console.warn("Tentando modo alternativo de câmera...", err);
                 html5QrCode.start({ facingMode: "environment" }, {
                     fps: 15,
-                    qrbox: { width: 250, height: 250 },
-                    aspectRatio: 1.0
+                    qrbox: (viewfinderWidth, viewfinderHeight) => {
+                        const lado = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.75);
+                        return { width: Math.max(180, lado), height: Math.max(180, lado) };
+                    },
+                    aspectRatio: 1.0,
+                    disableFlip: true
                 }, onScanSuccess).then(() => {
                     cameraAtiva = true;
                     document.getElementById('btnAcao').innerText = "DESLIGAR CÂMERA";
-                    setTimeout(prepararZoomManual, 350);
+                    setTimeout(prepararZoomManual, 700);
                 }).catch(e => {
                     alert("Não foi possível iniciar a câmera.");
                 });
