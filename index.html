@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#003399">
     <link rel="icon" type="image/jpeg" href="x-ray.png">
     <title>Scanner F-CGO-004 - Azul Cargo</title>
-    <script src="https://unpkg.com/html5-qrcode?v=3"></script>
+    <script src="https://unpkg.com/html5-qrcode?v=4"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 15px; background-color: #f0f2f5; }
         .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 450px; margin: auto; }
@@ -199,18 +199,25 @@
                 zoomMax = zoom.max;
                 zoomStep = Number(zoom.step) || Math.max(0.1, (zoomMax - zoomMin) / 100);
 
-                // Começa no zoom óptico/digital mínimo suportado, sem forçar um valor inválido.
+                // Inicia com aproximação moderada para etiquetas: tenta 2x,
+                // respeitando os limites reais informados pelo aparelho.
+                // Se o celular não alcançar 2x, usa um valor proporcional disponível.
                 const settings = html5QrCode.getRunningTrackSettings
                     ? html5QrCode.getRunningTrackSettings()
                     : {};
-                const zoomConfigurado = settings && typeof settings.zoom === 'number'
+                const zoomAtualCamera = settings && typeof settings.zoom === 'number'
                     ? settings.zoom : zoomMin;
-
-                zoomAtual = Math.max(zoomMin, Math.min(zoomMax, zoomConfigurado));
+                const zoomInicialDesejado = Math.max(2, zoomMin + (zoomMax - zoomMin) * 0.20);
+                zoomAtual = Math.max(zoomMin, Math.min(zoomMax,
+                    Math.max(zoomAtualCamera, zoomInicialDesejado)));
                 zoomDisponivel = true;
 
-                // Reaplica o valor atual com o formato de constraints mais compatível.
-                await aplicarZoomNativo(zoomAtual);
+                // Aplica o zoom inicial e mantém a pinça disponível para ajustar.
+                const aplicado = await aplicarZoomNativo(zoomAtual);
+                if (!aplicado) {
+                    zoomAtual = zoomAtualCamera;
+                    zoomDisponivel = false;
+                }
             } else {
                 // O zoom nativo não é disponibilizado por todos os navegadores.
                 zoomMin = 1;
